@@ -119,10 +119,9 @@ class IRSsWorldEnv(ParallelEnv):
         return observations, {}
 
     def step(self, actions):
-
-        LUs_actions = actions['LUs']
-        IRSs_actions = actions['IRSs']
-        ATK_actions = actions['ATK']
+        LUs_actions = actions['LUs'].flatten()
+        IRSs_actions = actions['IRSs'].flatten()
+        ATK_actions = actions['ATK'].flatten()
         
         self.Ws = []
         self.Fs = []
@@ -197,9 +196,13 @@ class IRSsWorldEnv(ParallelEnv):
 
             channels = np.hstack((HAK_real, HAK_imag,HAL_real, HAL_imag,HAE_real, HAE_imag,HEI_real, HEI_imag,HKI_real, HKI_imag,HKE_real, HKE_imag))
             observations['LUs'] = np.hstack((rewards['LUs'], infos['utilities'][0],infos['utilities'][4],infos['utilities'][2],self.C_state_old,self.C_state,channels))
-            observations['ATK'] = np.hstack((rewards['ATK'], infos['utilities'][1],infos['utilities'][5],infos['utilities'][3],self.C_state_old,self.C_state,channels))
-            observations['IRSs'] = np.hstack((rewards['IRSs'], infos['utilities'],self.C_state_old,self.C_state,channels))
+            observations['LUs'] =  (observations['LUs'] - np.mean(observations['LUs'])) / np.std(observations['LUs'])
 
+            observations['ATK'] = np.hstack((rewards['ATK'], infos['utilities'][1],infos['utilities'][5],infos['utilities'][3],self.C_state_old,self.C_state,channels))
+            observations['ATK'] =  (observations['ATK'] - np.mean(observations['ATK'])) / np.std(observations['ATK'])
+            
+            observations['IRSs'] = np.hstack((rewards['IRSs'], infos['utilities'],self.C_state_old,self.C_state,channels))
+            observations['IRSs'] =  (observations['IRSs'] - np.mean(observations['IRSs'])) / np.std(observations['IRSs'])
 
             return observations, rewards, terminateds, truncateds, infos
 
@@ -243,11 +246,11 @@ class IRSsWorldEnv(ParallelEnv):
         BS_circle_power_cost = db2pow(10)
         U_LUs_0 = V_LUs# - LUs_epsilon * np.sum(self.LUs_power_allocation_rates * self.power_bs) - circle_power_cost*(self.L) - BS_circle_power_cost
         U_ATK_0 = V_ATK# - ATK_epsilon * self.ATK_total_power_allocation_rate * self.power_ATK - circle_power_cost
-        U_IRSs_0 = 0#- IRSs_epsilon * np.sum(self.actives) * self.N * circle_power_cost
+        U_IRSs_0 = 0.0#- IRSs_epsilon * np.sum(self.actives) * self.N * circle_power_cost
 
 
-        rewards = {'LUs':0,'ATK':0,'IRSs':0}
-        infos = {'LUs':0,'ATK':0,'IRSs':0}
+        rewards = {'LUs':0.0,'ATK':0.0,'IRSs':0.0}
+        infos = {'LUs':0.0,'ATK':0.0,'IRSs':0.0}
         infos['utilities'] = self.utilities
 
         # compute shapley value for

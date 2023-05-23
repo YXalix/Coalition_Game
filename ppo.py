@@ -46,6 +46,12 @@ C_IRSs_1 = 0
 C_state = 0
 C_state_old = 0
 
+
+total_reward_LUs = 0
+total_reward_ATK = 0
+total_reward_IRSs = 0
+time_slot = 0
+
 def parse_args():
     # fmt: off
     parser = argparse.ArgumentParser()
@@ -70,7 +76,7 @@ def parse_args():
     parser.add_argument("--env-id", type=str, default="HalfCheetah-v4",
         help="the id of the environment")
     
-    parser.add_argument("--total-timesteps", type=int, default=1000000,
+    parser.add_argument("--total-timesteps", type=int, default=5000000,
         help="total timesteps of the experiments")
     parser.add_argument("--learning-rate", type=float, default=3e-4,
         help="the learning rate of the optimizer")
@@ -116,15 +122,15 @@ def make_env(env_id, idx, capture_video, run_name, gamma):
         else:
             env = IRSsWorldEnv()#gym.make(env_id)
         #env = gym.wrappers.FlattenObservation(env)  # deal with dm_control's Dict observation space
-        env = gym.wrappers.RecordEpisodeStatistics(env)
+        #env = gym.wrappers.RecordEpisodeStatistics(env)
         if capture_video:
             if idx == 0:
                 env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
         #env = gym.wrappers.ClipAction(env)
         #env = gym.wrappers.NormalizeObservation(env)
         #env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
-        env = gym.wrappers.NormalizeReward(env, gamma=gamma)
-        env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
+        #env = gym.wrappers.NormalizeReward(env, gamma=gamma)
+        #env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
         return env
 
     return thunk
@@ -235,9 +241,9 @@ if __name__ == "__main__":
     global_step = 0
     start_time = time.time()
     next_obs, _ = env.reset(seed=args.seed)
-    next_obs_LUs = next_obs['LUs']
-    next_obs_ATK = next_obs['ATK']
-    next_obs_IRSs = next_obs['IRSs']
+    next_obs_LUs = next_obs['LUs'].reshape(args.num_envs, -1)
+    next_obs_ATK = next_obs['ATK'].reshape(args.num_envs, -1)
+    next_obs_IRSs = next_obs['IRSs'].reshape(args.num_envs, -1)
     next_obs_LUs = torch.Tensor(next_obs_LUs).to(device)
     next_obs_ATK = torch.Tensor(next_obs_ATK).to(device)
     next_obs_IRSs = torch.Tensor(next_obs_IRSs).to(device)
@@ -256,7 +262,6 @@ if __name__ == "__main__":
             optimizer_LUs.param_groups[0]["lr"] = lrnow
             optimizer_ATK.param_groups[0]["lr"] = lrnow
             optimizer_IRSs.param_groups[0]["lr"] = lrnow
-
 
         C_state_old = C_state
         U_LUs_IRSs = 2000
@@ -335,8 +340,6 @@ if __name__ == "__main__":
             env.set_coalition(C_state_old, C_state)
             env.set_coalition_decisions([C_LUs,C_ATK,C_IRSs_0,C_IRSs_1])
 
-
-
             global_step += 1 * args.num_envs
             obs_LUs[step] = next_obs_LUs
             obs_ATK[step] = next_obs_ATK
@@ -370,19 +373,24 @@ if __name__ == "__main__":
                           'ATK': actions_ATK[step].cpu().numpy(),
                           'IRSs': actions_IRSs[step].cpu().numpy()}
             next_obs, reward, terminated, truncated, infos = env.step(actions)
-            done = np.logical_or(terminated, truncated)
+            done = np.logical_or(terminated, truncated).reshape((1, -1))
             rewards_LUs[step] = torch.tensor(reward['LUs']).to(device).view(-1)
             rewards_ATK[step] = torch.tensor(reward['ATK']).to(device).view(-1)
             rewards_IRSs[step] = torch.tensor(reward['IRSs']).to(device).view(-1)
-            next_obs_LUs, next_done_LUs = torch.Tensor(next_obs['LUs']).to(device), torch.Tensor(done).to(device)
-            next_obs_ATK, next_done_ATK = torch.Tensor(next_obs['ATK']).to(device), torch.Tensor(done).to(device)
-            next_obs_IRSs, next_done_IRSs = torch.Tensor(next_obs['IRSs']).to(device), torch.Tensor(done).to(device)
+            next_obs_LUs = torch.Tensor(next_obs['LUs'].reshape(1,-1)).to(device)
+            next_done_LUs = torch.Tensor(done).to(device)
+            next_obs_ATK, next_done_ATK = torch.Tensor(next_obs['ATK'].reshape(1,-1)).to(device), torch.Tensor(done).to(device)
+            next_obs_IRSs, next_done_IRSs = torch.Tensor(next_obs['IRSs'].reshape(1,-1)).to(device), torch.Tensor(done).to(device)
 
             # update coalition utilities information
             U_LUs_IRSs = infos['utilities'][4]
             U_ATK_IRSs = infos['utilities'][5]
 
             if done:
+                total_reward_LUs += rewards_LUs[step].item()
+                total_reward_ATK += rewards_ATK[step].item()
+                total_reward_IRSs += rewards_IRSs[step].item()
+                time_slot += 1
                 # update all utilities information
                 if C_state == 0:
                     U_LUs = U_LUs*U_LUs_Count/(U_LUs_Count+1) + infos['LUs']/(U_LUs_Count+1)
@@ -407,7 +415,7 @@ if __name__ == "__main__":
                     U_ATK_Count = min(U_ATK_Count,99)
                     U_IRSs_1_Count = min(U_IRSs_1_Count,99)
                 elif C_state == 2:
-                    U_LUs = U_LUs * U_LUs_Count / (U_LUs_Count + 1) + infos[0]/((U_LUs_Count + 1))
+                    U_LUs = U_LUs * U_LUs_Count / (U_LUs_Count + 1) + infos['LUs']/((U_LUs_Count + 1))
                     U_IRSs_0 = U_IRSs_0*U_IRSs_0_Count/(U_IRSs_0_Count+1) + infos['IRSs']/(U_IRSs_0_Count+1)
                     U_ATK_IRSs_Count = min(U_ATK_IRSs_Count,5)
                     U_LUs_Count = min(U_LUs_Count,99)
@@ -632,6 +640,16 @@ if __name__ == "__main__":
         y_pred_IRSs, y_true_IRSs = b_values_IRSs.cpu().numpy(), b_returns_IRSs.cpu().numpy()
         var_y_IRSs = np.var(y_true_IRSs)
         explained_var_IRSs = np.nan if var_y_IRSs == 0 else 1 - np.var(y_true_IRSs - y_pred_IRSs) / var_y_IRSs
+
+
+        writer.add_scalar("Utility/approx_U_LUs", U_LUs, global_step)
+        writer.add_scalar("Utility/approx_U_ATK", U_ATK, global_step)
+        writer.add_scalar("Utility/approx_U_IRSs_0", U_IRSs_0, global_step)
+        writer.add_scalar("Utility/approx_U_IRSs_1", U_IRSs_1, global_step)
+
+        writer.add_scalar("Utility/cru_U_LUs", total_reward_LUs, global_step)
+        writer.add_scalar("Utility/cru_U_ATK", total_reward_ATK, global_step)
+        writer.add_scalar("Utility/cru_U_IRSs", total_reward_IRSs, global_step)
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar("charts/learning_rate_LUs", optimizer_LUs.param_groups[0]["lr"], global_step)
